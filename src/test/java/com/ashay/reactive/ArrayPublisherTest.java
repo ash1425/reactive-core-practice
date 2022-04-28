@@ -6,10 +6,10 @@ import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.LongStream;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.isA;
+import static org.hamcrest.Matchers.*;
 import static org.hamcrest.collection.IsIterableContainingInOrder.contains;
 import static org.hamcrest.core.Is.is;
 
@@ -142,5 +142,76 @@ public class ArrayPublisherTest {
         assertThat(error.get(), isA(NullPointerException.class));
 
         assertThat(latch.await(1L, TimeUnit.SECONDS), is(true));
+    }
+
+    @Test
+    void stackoverflow() throws InterruptedException {
+        Long[] longs = LongStream.range(0, 1_00_00_000L)
+                .boxed()
+                .toArray(Long[]::new);
+        Publisher<Long> rainbowPublisher = new ArrayPublisher<>(longs);
+        ArrayList<Long> collector = new ArrayList<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        rainbowPublisher.subscribe(new Subscriber<>() {
+            Subscription subscription;
+
+            @Override
+            public void onSubscribe(Subscription s) {
+                subscription = s;
+                subscription.request(1);
+            }
+
+            @Override
+            public void onNext(Long s) {
+                collector.add(s);
+                subscription.request(1);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+            }
+
+            @Override
+            public void onComplete() {
+                latch.countDown();
+            }
+        });
+
+        latch.await(5L, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void cancel() throws InterruptedException {
+        Publisher<String> rainbowPublisher = new ArrayPublisher<>(new String[]{"violet", "indigo", null, "green", "yellow", "orange", "red"});
+        ArrayList<String> collector = new ArrayList<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        rainbowPublisher.subscribe(new Subscriber<>() {
+
+            @Override
+            public void onSubscribe(Subscription s) {
+                s.cancel();
+                s.request(1);
+            }
+
+            @Override
+            public void onNext(String s) {
+                collector.add(s);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+            }
+
+            @Override
+            public void onComplete() {
+                latch.countDown();
+            }
+        });
+
+        latch.await(1L, TimeUnit.SECONDS);
+
+        assertThat(collector, empty());
     }
 }
